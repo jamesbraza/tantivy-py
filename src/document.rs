@@ -814,15 +814,21 @@ impl Document {
         py: Python<'_>,
     ) -> PyObject {
         match op {
-            CompareOp::Eq => (self == other).into_py(py),
-            CompareOp::Ne => (self != other).into_py(py),
+            CompareOp::Eq => {
+                Self::are_equal_after_normalization(self, other).into_py(py)
+            }
+            CompareOp::Ne => {
+                (!Self::are_equal_after_normalization(self, other)).into_py(py)
+            }
             _ => py.NotImplemented(),
         }
     }
 
     #[staticmethod]
     fn _internal_from_pythonized(serialized: &Bound<PyAny>) -> PyResult<Self> {
-        pythonize::depythonize_bound(serialized.clone()).map_err(to_pyerr)
+        let doc: Document = pythonize::depythonize_bound(serialized.clone())
+            .map_err(to_pyerr)?;
+        Ok(doc.normalize_integer_types())
     }
 
     fn __reduce__<'a>(
@@ -913,5 +919,99 @@ impl Document {
             .get(field)
             .into_iter()
             .flat_map(|values| values.iter())
+    }
+
+    fn normalize_integer_types(self) -> Self {
+        let normalized_values = self
+            .field_values
+            .into_iter()
+            .map(|(field, values)| {
+                let normalized =
+                    values.into_iter().map(normalize_value).collect();
+                (field, normalized)
+            })
+            .collect();
+        Document {
+            field_values: normalized_values,
+        }
+    }
+
+    /// Compare two documents to see if they would be equal after normalization
+    /// without actually cloning and normalizing the entire document
+    fn are_equal_after_normalization(doc1: &Self, doc2: &Self) -> bool {
+        // Check if keys match
+        if doc1.field_values.len() != doc2.field_values.len() {
+            return false;
+        }
+
+        // Compare each field
+        doc1.field_values.iter().all(|(field, values1)| {
+            match doc2.field_values.get(field) {
+                Some(values2) if values1.len() == values2.len() => {
+                    // Compare each value
+                    values1.iter().zip(values2.iter()).all(|(v1, v2)| {
+                        Self::values_equal_after_normalization(v1, v2)
+                    })
+                }
+                _ => false,
+            }
+        })
+    }
+
+    /// Compare two values to see if they would be equal after normalization
+    fn values_equal_after_normalization(val1: &Value, val2: &Value) -> bool {
+        match (val1, val2) {
+            // Special case for U64/I64 comparison
+            (Value::U64(u), Value::I64(i)) if *u <= i64::MAX as u64 => {
+                *u as i64 == *i
+            }
+            (Value::I64(i), Value::U64(u)) if *u <= i64::MAX as u64 => {
+                *i == *u as i64
+            }
+
+            // For objects, check length and then all key-value pairs
+            (Value::Object(map1), Value::Object(map2)) => {
+                map1.len() == map2.len()
+                    && map1.iter().all(|(k, v1)| {
+                        map2.get(k).map_or(false, |v2| {
+                            Self::values_equal_after_normalization(v1, v2)
+                        })
+                    })
+            }
+
+            // For arrays, check length and then all elements
+            (Value::Array(arr1), Value::Array(arr2)) => {
+                arr1.len() == arr2.len()
+                    && arr1.iter().zip(arr2.iter()).all(|(v1, v2)| {
+                        Self::values_equal_after_normalization(v1, v2)
+                    })
+            }
+
+            // For other types, use regular equality
+            _ => val1 == val2,
+        }
+    }
+}
+
+fn normalize_value(value: Value) -> Value {
+    match value {
+        Value::U64(u) if u <= i64::MAX as u64 => {
+            // Convert small unsigned integers to signed for consistency
+            Value::I64(u as i64)
+        }
+        Value::Object(map) => {
+            // Process nested objects
+            let new_map = map
+                .into_iter()
+                .map(|(k, v)| (k, normalize_value(v)))
+                .collect();
+            Value::Object(new_map)
+        }
+        Value::Array(arr) => {
+            // Process arrays
+            let new_arr = arr.into_iter().map(normalize_value).collect();
+            Value::Array(new_arr)
+        }
+        _ => value,
     }
 }
