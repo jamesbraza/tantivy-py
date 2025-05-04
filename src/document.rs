@@ -401,9 +401,7 @@ enum SerdeValue {
     /// Array
     Array(Vec<Value>),
     /// Object value.
-    #[serde(
-        deserialize_with = "deserialize_json_object_as_i64",
-    )]
+    #[serde(deserialize_with = "deserialize_json_object_as_i64")]
     Object(Vec<(String, Value)>),
     /// IpV6 Address. Internally there is no IpV4, it needs to be converted to `Ipv6Addr`.
     IpAddr(Ipv6Addr),
