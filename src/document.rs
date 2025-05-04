@@ -314,13 +314,11 @@ where
 
 fn deserialize_json_object_as_i64<'de, D>(
     deserializer: D,
-) -> Result<BTreeMap<String, Value>, D::Error>
+) -> Result<Vec<(String, Value)>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let raw_object: BTreeMap<String, serde_json::Value> =
-        BTreeMap::deserialize(deserializer)?;
-
+    let raw_object = Vec::deserialize(deserializer)?;
     let converted_object = raw_object
         .into_iter()
         .map(|(key, value)| {
@@ -346,7 +344,7 @@ where
 
 fn deserialize_json_object_as_i64_inner(
     raw_object: serde_json::Map<String, serde_json::Value>,
-) -> BTreeMap<String, Value> {
+) -> Vec<(String, Value)> {
     raw_object
         .into_iter()
         .map(|(key, value)| {
